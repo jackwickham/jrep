@@ -1,5 +1,3 @@
-#[allow(unused_variables, dead_code)]
-
 use std::io::prelude::*;
 use std::fs::File;
 use std::io::ErrorKind;
