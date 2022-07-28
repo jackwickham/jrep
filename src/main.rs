@@ -35,7 +35,14 @@ fn main() {
     let pattern = args.next().unwrap();
     let file_path = args.next().unwrap();
 
-    println!("{}", file_path);
+    if pattern.len() == 0 {
+        panic!("A pattern must be provided");
+    }
+    // We need enough space left in the buffer to read the whole match and backtrack
+    if pattern.len() > READ_SIZE {
+        panic!("Pattern too long");
+    }
+
     let file = File::open(file_path).unwrap();
 
     if search_file(file, &pattern).unwrap() {
@@ -170,6 +177,11 @@ mod tests {
     #[test]
     fn test_match_at_end() {
         assert_eq!(search_file("foo bar baz".as_bytes(), "baz").unwrap(), true);
+    }
+
+    #[test]
+    fn test_match_after_backtrack() {
+        assert_eq!(search_file("ooooffoo".as_bytes(), "foo").unwrap(), true);
     }
 
     #[test]
