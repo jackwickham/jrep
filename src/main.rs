@@ -3,6 +3,8 @@ use std::fs::File;
 use std::io::ErrorKind;
 use std::io::Result;
 
+mod pattern;
+
 type SkipTable = [usize; 256];
 const BUFFER_SIZE: usize = 2 << 18; // 260k
 const READ_SIZE: usize = 2 << 16; // 65k
@@ -52,15 +54,16 @@ fn main() {
     }
 }
 
-fn search_file<R : Read>(file: R, pattern: &str) -> Result<bool> {
-    let skip_table = build_skip_table(pattern);
+fn search_file<R : Read>(file: R, pattern_str: &str) -> Result<bool> {
+    let pattern = pattern::Pattern::parse(pattern_str).map_err(|e| std::io::Error::new(ErrorKind::Other, e))?;
+    let skip_table = build_skip_table(&pattern);
     let mut buffer = FileBuffer::new(file);
     buffer.advance(pattern.len() - 1);
 
     while let Some(c) = buffer.read()? {
         let skip_distance = skip_table[c as usize];
         if skip_distance == 0 {
-            if check_match(&buffer, pattern) {
+            if check_match(&buffer, &pattern) {
                 return Ok(true);
             } else {
                 buffer.advance(1);
@@ -72,23 +75,25 @@ fn search_file<R : Read>(file: R, pattern: &str) -> Result<bool> {
     return Ok(false);
 }
 
-fn build_skip_table(pattern: &str) -> SkipTable {
+fn build_skip_table(pattern: &pattern::Pattern) -> SkipTable {
     let mut skip_distance = pattern.len();
     let mut table = [skip_distance; 256];
 
-    for c in pattern.bytes() {
+    for pattern_char in pattern.chars() {
         skip_distance -= 1;
-        table[c as usize] = skip_distance;
+        for c in pattern_char.all_chars() {
+            table[c as usize] = skip_distance;
+        }
     }
 
     table
 }
 
-fn check_match<R : Read>(buffer: &FileBuffer<R>, pattern: &str) -> bool {
-    let mut pattern_it = pattern.bytes().rev().zip(0..);
+fn check_match<R : Read>(buffer: &FileBuffer<R>, pattern: &pattern::Pattern) -> bool {
+    let mut pattern_it = pattern.chars().iter().rev().zip(0..);
     pattern_it.next();
-    for (expected, offset) in &mut pattern_it {
-        if buffer.read_back(offset) != expected {
+    for (matcher, offset) in &mut pattern_it {
+        if !matcher.matches(buffer.read_back(offset)) {
             return false;
         }
     }
@@ -187,6 +192,36 @@ mod tests {
     #[test]
     fn test_no_match_underflow() {
         assert_eq!(search_file("ffffff".as_bytes(), "\0f").unwrap(), false);
+    }
+
+    #[test]
+    fn test_match_wildcard() {
+        assert_eq!(search_file("foo bar baz".as_bytes(), "b.r").unwrap(), true);
+    }
+
+    #[test]
+    fn test_match_wildcard_at_end() {
+        assert_eq!(search_file("foo bar baz".as_bytes(), "ba.").unwrap(), true);
+    }
+
+    #[test]
+    fn test_match_range() {
+        assert_eq!(search_file("foo bar baz".as_bytes(), "b[cab]r").unwrap(), true);
+    }
+
+    #[test]
+    fn test_no_match_incorrect_range() {
+        assert_eq!(search_file("foo bar baz".as_bytes(), "b[cd]r").unwrap(), false);
+    }
+
+    #[test]
+    fn test_match_negated_range() {
+        assert_eq!(search_file("foo bar baz".as_bytes(), "b[^cd]r").unwrap(), true);
+    }
+
+    #[test]
+    fn test_no_match_incorrect_negated_range() {
+        assert_eq!(search_file("foo bar baz".as_bytes(), "b[^ab]r").unwrap(), false);
     }
 
     #[test]
